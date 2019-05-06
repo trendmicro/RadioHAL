@@ -1053,7 +1053,9 @@ these examples and explanations and extend them to suit your needs.
 #ifndef RadioHead_h
 #define RadioHead_h
 
-//#define RHAL_DEBUG true
+//#define RHAL_DEBUG       // do (not) compile debugging code
+//#define RHAL_SPI_DEBUG   // do (not) compile SPI debugging code
+//#define RHAL_FIFO_DEBUG  // do (not) compile FIFO debugging code
 
 // Official version numbers are maintained automatically by Makefile:
 #define RH_VERSION_MAJOR 1

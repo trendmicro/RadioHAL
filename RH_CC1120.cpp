@@ -163,12 +163,16 @@ bool RH_CC1120::init() {
 
   // CC1120 setup start =================================================
   // Reset the chip
+#ifdef RHAL_DEBUG
   if (debug()) _printer->println("[RHAL] SRES");
+#endif
   spiCommand(RH_CC1120_STROBE_30_SRES); // Reset
 
   delay(100);
 
+#ifdef RHAL_DEBUG
   if (debug()) _printer->println("[RHAL] SCAL");
+#endif
   spiCommand(RH_CC1120_STROBE_33_SCAL); // Reset
 
   delay(100);
@@ -208,7 +212,9 @@ bool RH_CC1120::init() {
   // Wait for the bus to be clear so we don't get spurious triggers
   for (uint8_t val = LOW; val == LOW; val = digitalRead(_interruptPin));
   // now we can attach the ISRs
+#ifdef RHAL_DEBUG
   if (debug()) _printer->println("[RHAL] IRQ bus clear");
+#endif
 
   delay(200);
 
@@ -238,26 +244,32 @@ bool RH_CC1120::init() {
     return false; // Too many devices, not enough interrupt vectors
   // IRQ setup done =====================================================
 
+#ifdef RHAL_DEBUG
   if (debug()) {
     _printer->print("[RHAL] _variablePayloadLen = ");
     _printer->println(_variablePayloadLen);
   }
+#endif
 
   return true;
 }
 
 void RH_CC1120::waitForMarcState(uint8_t state) {
+#ifdef RHAL_DEBUG
   if (debug()) {
     _printer->println("[RHAL] START MARCSTATE.MARC_STATE ==============================");
     _printer->print("[RHAL] Waiting for MARCSTATE.MARC_STATE == 0b");
     _printer->println(state, BIN);
   }
+#endif
 
   while ((spiReadRegister(RH_CC1120_REG_2F73_MARCSTATE) & RH_CC1120_MARC_STATE_MASK) != state)
     YIELD;
 
+#ifdef RHAL_DEBUG
   if (debug())
     _printer->println("[RHAL] END MARCSTATE.MARC_STATE ==============================");
+#endif
 }
 
 void RH_CC1120::updateRssi() {
@@ -283,134 +295,156 @@ void RH_CC1120::updateRssi() {
 void RH_CC1120::handleInterrupt() {
   _marcStatus1 = spiReadRegister(RH_CC1120_REG_2F94_MARC_STATUS1);
 
+#ifdef RHAL_DEBUG
   if (debug()) {
-    _printer->println("[RHAL] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> ISR IN");
+    _printer->println("[RHAL] >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> ISR IN");
 
     _printer->print("[RHAL] _marcStatus1 = 0x");
     _printer->println(_marcStatus1, HEX);
   }
-
-  /* RXDONE -------------------------------------------------------------------*/
-  if (_marcStatus1 == RH_CC1120_MARC_STATUS1_RXDONE) {
-    updateRssi();
-
-    _bufLen = spiReadRegister(RH_CC1120_REG_2FD7_NUM_RXBYTES);
-
-    if (debug()) {
-      uint8_t num_rx_bytes = spiReadRegister(RH_CC1120_REG_2FD7_NUM_RXBYTES);
-      uint8_t rx_first = spiReadRegister(RH_CC1120_REG_2FD2_RXFIRST);
-      uint8_t rx_last = spiReadRegister(RH_CC1120_REG_2FD4_RXLAST);
-
-      _printer->print("[RHAL] found ");
-      _printer->print(_bufLen);
-      _printer->println(" bytes of data on the RXFIFO");
-
-      _printer->print("[RHAL] found ");
-      _printer->print(num_rx_bytes);
-      _printer->println(" TXBYTES of data on the RXFIFO");
-
-      _printer->print("[RHAL] RXFIRST = ");
-      _printer->println(rx_first);
-
-      _printer->print("[RHAL] RXLAST = ");
-      _printer->println(rx_last);
-    }
-
-    // _bufLen is just whatever is on the RX FIFO: in `recv()` we take care of
-    // parsing the payload length bytes (if any): so, as long as it's within
-    // the boundaries, we're good
-    if (_bufLen > RH_CC1120_MAX_PAYLOAD_LEN)
-      _bufLen = RH_CC1120_MAX_PAYLOAD_LEN;
-
-    // a packet is in the RX FIFO ready to be read: we copy it into _buf
-    spiBurstReadRegister((uint16_t)RH_CC1120_REG_003F_FIFO, _buf, _bufLen);
-    resetRxFifoPointers(); // reset pointers ASAP
-
-    if (debug() && _bufLen)
-      printBuffer("[RHAL] RX: ", _buf, _bufLen);
-
-    validateRxBuf();
-
-    // because of RFEND_CFG1.RXOFF_MODE's value, the radio will stay in RX
-    _mode = RHModeIdle;
-    return;
-  }
-  /* RXDONE -------------------------------------------------------------------*/
-
-  /* TXDONE -------------------------------------------------------------------*/
-  if (_marcStatus1 == RH_CC1120_MARC_STATUS1_TXDONE) {
-    _mode = RHModeIdle; // because of RFEND_CFG0.TXOFF_MODE's default value
-    return; // TXDONE!
-  }
-  /* TXDONE -------------------------------------------------------------------*/
-
-  /* TX ERR -------------------------------------------------------------------*/
-  if (_marcStatus1 == RH_CC1120_MARC_STATUS1_TXFIFO_OF ||
-      _marcStatus1 == RH_CC1120_MARC_STATUS1_TXFIFO_UF ||
-      _marcStatus1 == RH_CC1120_MARC_STATUS1_TX_TOUT ||
-      _marcStatus1 == RH_CC1120_MARC_STATUS1_TXON_CCA_FAIL) {
-
-    if (debug()) _printer->println("[RHAL] Flushing the TXFIFO because of an error");
-
-    // flush the TX FIFO
-    spiCommand(RH_CC1120_STROBE_3B_SFTX); // flush will IDLE (TX won't be re-tried)
-
-    _mode = RHModeIdle; // because of RFEND_CFG0.TXOFF_MODE's default value
-    return;
-  }
-  /* TX ERR -------------------------------------------------------------------*/
-
-  /* RX ERR -------------------------------------------------------------------*/
-  if (_marcStatus1 == RH_CC1120_MARC_STATUS1_RXFIFO_OF ||
-      _marcStatus1 == RH_CC1120_MARC_STATUS1_RXFIFO_UF) {
-
-    if (debug()) _printer->println("[RHAL] Flushing the RXFIFO because of an over/underflow error");
-
-    // flush the RX FIFO
-    spiCommand(RH_CC1120_STROBE_3A_SFRX); // flush will IDLE
-    _mode = RHModeIdle;
-    setModeRx();
-
-    return;
-  }
-  /* RX ERR -------------------------------------------------------------------*/
-
-  /* RX BAD -------------------------------------------------------------------*/
-  if (!_promiscuous && // accept "bad" packets only in promiscuous mode
-      (_marcStatus1 == RH_CC1120_MARC_STATUS1_RX_TERM       ||
-       _marcStatus1 == RH_CC1120_MARC_STATUS1_PKT_TOO_LONG  ||
-       _marcStatus1 == RH_CC1120_MARC_STATUS1_PKT_WROCRC    ||
-       _marcStatus1 == RH_CC1120_MARC_STATUS1_PKT_WROADDR )
-     ){
-
-    if (debug()) _printer->println("[RHAL] Flushing the RXFIFO because of a packet that we cannot accept");
-
-    // flush the RX FIFO
-    spiCommand(RH_CC1120_STROBE_3A_SFRX); // flush will IDLE
-    _mode = RHModeIdle;
-    setModeRx();
-
-    return;
-  }
-  /* RX BAD -------------------------------------------------------------------*/
-
-  /* RX EXC -------------------------------------------------------------------*/
-  if (_marcStatus1 != RH_CC1120_MARC_STATUS1_RXDONE) {
-#ifdef RHAL_DEBUG
-    if (debug()) _printer->println("[RHAL] Flushing the RXFIFO because of an unexpected RX condition");
 #endif
 
-    // flush the RX FIFO
-    spiCommand(RH_CC1120_STROBE_3A_SFRX); // flush will IDLE
-    _mode = RHModeIdle;
-    setModeRx();
+  /* TX =========================================================================*/
+  if (_mode == RHModeTx) {
+    /* TXDONE -------------------------------------------------------------------*/
+    if (_marcStatus1 == RH_CC1120_MARC_STATUS1_TXDONE) {
+      _mode = RHModeIdle; // because of RFEND_CFG0.TXOFF_MODE's default value
+      resetTxFifoPointers();
+      return;
+    }
+    /* TXDONE -------------------------------------------------------------------*/
 
-    return;
+    /* TX ERR -------------------------------------------------------------------*/
+    if (_marcStatus1 == RH_CC1120_MARC_STATUS1_TXFIFO_OF ||
+        _marcStatus1 == RH_CC1120_MARC_STATUS1_TXFIFO_UF ||
+        _marcStatus1 == RH_CC1120_MARC_STATUS1_TX_TOUT ||
+        _marcStatus1 == RH_CC1120_MARC_STATUS1_TXON_CCA_FAIL) {
+
+#ifdef RHAL_DEBUG
+      if (debug()) _printer->println("[RHAL] Flushing the TXFIFO because of an error");
+#endif
+
+      // flush the TX FIFO
+      resetTxFifoPointers();
+      setModeIdle();
+
+      /* Flushing seems to bring the radio into an unexpected state (i.e., crash) */
+      //spiCommand(RH_CC1120_STROBE_3B_SFTX); // flush will IDLE (TX won't be re-tried)
+      //_mode = RHModeIdle; // because of RFEND_CFG0.TXOFF_MODE's default value
+      return;
+    }
+    /* TX ERR -------------------------------------------------------------------*/
   }
-  /* RX EXC -------------------------------------------------------------------*/
+  /* TX =========================================================================*/
 
+
+  /* RX =========================================================================*/
+  if (_mode == RHModeRx) {
+    _bufLen = spiReadRegister(RH_CC1120_REG_2FD7_NUM_RXBYTES);
+
+    /* RXDONE -------------------------------------------------------------------*/
+    if (_bufLen > 0 && _bufLen < RH_CC1120_MAX_PAYLOAD_LEN && _marcStatus1 == RH_CC1120_MARC_STATUS1_RXDONE) {
+#ifdef RHAL_FIFO_DEBUG
+      if (debug()) {
+        uint8_t num_rx_bytes = spiReadRegister(RH_CC1120_REG_2FD7_NUM_RXBYTES);
+        uint8_t rx_first = spiReadRegister(RH_CC1120_REG_2FD2_RXFIRST);
+        uint8_t rx_last = spiReadRegister(RH_CC1120_REG_2FD4_RXLAST);
+
+        _printer->print("[RHAL] found ");
+        _printer->print(_bufLen);
+        _printer->println(" bytes of data on the RXFIFO");
+
+        _printer->print("[RHAL] found ");
+        _printer->print(num_rx_bytes);
+        _printer->println(" RXBYTES of data on the RXFIFO");
+
+        _printer->print("[RHAL] RXFIRST = ");
+        _printer->println(rx_first);
+
+        _printer->print("[RHAL] RXLAST = ");
+        _printer->println(rx_last);
+      }
+#endif
+
+      // a packet is in the RX FIFO ready to be read: we copy it into _buf
+      spiBurstReadRegister((uint16_t)RH_CC1120_REG_003F_FIFO, _buf, _bufLen);
+
+      updateRssi();
+
+      resetRxFifoPointers(); // reset pointers ASAP
+
+#ifdef RHAL_DEBUG
+      if (debug() && _bufLen)
+        printBuffer("[RHAL] RX: ", _buf, _bufLen);
+#endif
+
+      validateRxBuf();
+
+      // because of RFEND_CFG1.RXOFF_MODE's value, the radio will stay in RX
+      _mode = RHModeIdle;
+      return;
+    }
+    /* RXDONE -------------------------------------------------------------------*/
+
+    /* RX ERR -------------------------------------------------------------------*/
+    if (_marcStatus1 == RH_CC1120_MARC_STATUS1_RXFIFO_OF ||
+        _marcStatus1 == RH_CC1120_MARC_STATUS1_RXFIFO_UF) {
+
+#ifdef RHAL_DEBUG
+      if (debug()) _printer->println("[RHAL] Flushing the RXFIFO because of an over/underflow error");
+#endif
+
+      // flush the RX FIFO
+      spiCommand(RH_CC1120_STROBE_3A_SFRX); // flush will IDLE
+      _mode = RHModeIdle;
+      setModeRx();
+
+      return;
+    }
+    /* RX ERR -------------------------------------------------------------------*/
+
+    /* RX BAD -------------------------------------------------------------------*/
+    if (!_promiscuous && // accept "bad" packets only in promiscuous mode
+        (_marcStatus1 == RH_CC1120_MARC_STATUS1_RX_TERM       ||
+         _marcStatus1 == RH_CC1120_MARC_STATUS1_PKT_TOO_LONG  ||
+         _marcStatus1 == RH_CC1120_MARC_STATUS1_PKT_WROCRC    ||
+         _marcStatus1 == RH_CC1120_MARC_STATUS1_PKT_WROADDR )
+       ){
+
+#ifdef RHAL_DEBUG
+      if (debug()) _printer->println("[RHAL] Flushing the RXFIFO because of a packet that we cannot accept");
+#endif
+
+      // flush the RX FIFO
+      spiCommand(RH_CC1120_STROBE_3A_SFRX); // flush will IDLE
+      _mode = RHModeIdle;
+      setModeRx();
+
+      return;
+    }
+    /* RX BAD -------------------------------------------------------------------*/
+
+    /* RX EXC -------------------------------------------------------------------*/
+    if (_marcStatus1 != RH_CC1120_MARC_STATUS1_RXDONE) {
+#ifdef RHAL_DEBUG
+      if (debug()) _printer->println("[RHAL] Flushing the RXFIFO because of an unexpected RX condition");
+#endif
+
+      // flush the RX FIFO
+      spiCommand(RH_CC1120_STROBE_3A_SFRX); // flush will IDLE
+      _mode = RHModeIdle;
+      setModeRx();
+
+      return;
+    }
+    /* RX EXC -------------------------------------------------------------------*/
+  }
+  /* RX =========================================================================*/
+
+#ifdef RHAL_DEBUG
   if (debug())
     _printer->println("[RHAL] Unhandled IRQ");
+#endif
 }
 
 void RH_CC1120::printBuffer(const char* prompt, const uint8_t* buf, uint8_t len)
@@ -462,7 +496,7 @@ void RH_CC1120::isr2() {
 void RH_CC1120::spiGenericRegAccess(uint8_t addr, uint8_t *data, uint16_t len) {
   uint16_t i;
 
-#ifdef RHAL_DEBUG
+#ifdef RHAL_SPI_DEBUG
   if (debug()) {
     _printer->print("[RHAL] spiGenericRegAccess(addr = ");
     _printer->print(addr, HEX);
@@ -508,17 +542,17 @@ uint8_t RH_CC1120::shortRegAccess(uint8_t accessType, uint8_t addrByte,
   _spi.endTransaction();
   ATOMIC_BLOCK_END;
 
-#ifdef RHAL_DEBUG
-//  if (debug()) {
-//    _printer->print("[RHAL] shortRegAccess(accessType = ");
-//    _printer->print(accessType, HEX);
-//    _printer->print(", addrByte = ");
-//    _printer->print(addrByte, HEX);
-//    _printer->print(", len = ");
-//    _printer->print(len);
-//    _printer->print(") = ");
-//    _printer->println(readValue);
-//  }
+#ifdef RHAL_SPI_DEBUG
+  if (debug()) {
+    _printer->print("[RHAL] shortRegAccess(accessType = ");
+    _printer->print(accessType, HEX);
+    _printer->print(", addrByte = ");
+    _printer->print(addrByte, HEX);
+    _printer->print(", len = ");
+    _printer->print(len);
+    _printer->print(") = ");
+    _printer->println(readValue);
+  }
 #endif
 
   return readValue;
@@ -541,19 +575,19 @@ uint8_t RH_CC1120::longRegAccess(uint8_t accessType, uint8_t extAddr,
   _spi.endTransaction();
   ATOMIC_BLOCK_END;
 
-#ifdef RHAL_DEBUG
-//  if (debug()) {
-//    _printer->print("[RHAL] longRegAccess(accessType = ");
-//    _printer->print(accessType, HEX);
-//    _printer->print(", extAddr = ");
-//    _printer->print(extAddr, HEX);
-//    _printer->print(", regAddr = ");
-//    _printer->print(regAddr, HEX);
-//    _printer->print(", len = ");
-//    _printer->print(len);
-//    _printer->print(") = ");
-//    _printer->println(readValue);
-//  }
+#ifdef RHAL_SPI_DEBUG
+  if (debug()) {
+    _printer->print("[RHAL] longRegAccess(accessType = ");
+    _printer->print(accessType, HEX);
+    _printer->print(", extAddr = ");
+    _printer->print(extAddr, HEX);
+    _printer->print(", regAddr = ");
+    _printer->print(regAddr, HEX);
+    _printer->print(", len = ");
+    _printer->print(len);
+    _printer->print(") = ");
+    _printer->println(readValue);
+  }
 #endif
 
   return readValue;
@@ -574,15 +608,15 @@ uint8_t RH_CC1120::spiReadRegisterWrapper(uint16_t reg, uint8_t *data,
                        tempExt, tempAddr, data, len);
   }
 
-#ifdef RHAL_DEBUG
-//  if (debug()) {
-//    _printer->print("[RHAL] spiReadRegisterWrapper(reg = ");
-//    _printer->print(reg, HEX);
-//    _printer->print(", len = ");
-//    _printer->print(len);
-//    _printer->print(") = ");
-//    _printer->println(rc);
-//  }
+#ifdef RHAL_SPI_DEBUG
+  if (debug()) {
+    _printer->print("[RHAL] spiReadRegisterWrapper(reg = ");
+    _printer->print(reg, HEX);
+    _printer->print(", len = ");
+    _printer->print(len);
+    _printer->print(") = ");
+    _printer->println(rc);
+  }
 #endif
 
   return rc;
@@ -610,27 +644,27 @@ uint8_t RH_CC1120::spiReadRegister(uint16_t reg) {
   uint8_t len = 1;
   spiReadRegisterWrapper(reg, &data, len);
 
-#ifdef RHAL_DEBUG
-//  if (debug()) {
-//    _printer->print("[RHAL] spiReadRegister(reg = ");
-//    _printer->print(reg, HEX);
-//    _printer->print(") = ");
-//    _printer->println(data);
-//  }
+#ifdef RHAL_SPI_DEBUG
+  if (debug()) {
+    _printer->print("[RHAL] spiReadRegister(reg = ");
+    _printer->print(reg, HEX);
+    _printer->print(") = ");
+    _printer->println(data);
+  }
 #endif
 
   return data;
 }
 
 uint8_t RH_CC1120::spiWriteRegister(uint16_t reg, uint8_t val) {
-#ifdef RHAL_DEBUG
-//  if (debug()) {
-//    _printer->print("[RHAL] spiWriteRegister(reg = ");
-//    _printer->print(reg, HEX);
-//    _printer->print(", val = ");
-//    _printer->print(val, HEX);
-//    _printer->println(");");
-//  }
+#ifdef RHAL_SPI_DEBUG
+  if (debug()) {
+    _printer->print("[RHAL] spiWriteRegister(reg = ");
+    _printer->print(reg, HEX);
+    _printer->print(", val = ");
+    _printer->print(val, HEX);
+    _printer->println(");");
+  }
 #endif
 
   return spiWriteRegisterWrapper(reg, &val, 1);
@@ -717,17 +751,17 @@ bool RH_CC1120::recv(uint8_t *buf, uint8_t *len) {
       *len = _bufLen;
 
     // if in variable payload mode, we skip `_sizeOfPayloadLen` bytes, which
-    // hold the encoded length; we validate that, and copy the data accordingly
+    // hold the encoded length; we validate that, and copy the data
 
     // FIXME: instead of reading the len as 1 byte, read it as `_sizeOfPayloadLen` bytes
 
     if (_variablePayloadLen && _buf[0] > 0 && _buf[0] <= RH_CC1120_MAX_PAYLOAD_LEN - 1) {
       *len = _buf[0];                    // set the length as the encoded length
-      skip += _sizeOfPayloadLen;         // buffer pointer moves to the next position
+      skip += _sizeOfPayloadLen;
 
 #ifdef RHAL_DEBUG
       if (debug()) {
-        _printer->print("[RHAL] The encoded len is ");
+        _printer->print("[RHAL] The variable len encoded in the packet is ");
         _printer->println(_buf[0], DEC);
       }
 #endif
@@ -739,11 +773,13 @@ bool RH_CC1120::recv(uint8_t *buf, uint8_t *len) {
 
   clearRxBuf(); // This message accepted and cleared
 
+#ifdef RHAL_DEBUG
   if (debug()) {
     _printer->print("[RHAL] RX successful: ");
     _printer->print(*len);
     _printer->println(" bytes copied");
   }
+#endif
 
   return true;
 }
@@ -759,15 +795,15 @@ bool RH_CC1120::send(const uint8_t *data, uint8_t len) {
   if (!checkPayloadLen(len))
     return false;
 
+#ifdef RHAL_DEBUG
   if (debug()) {
     _printer->print("[RHAL] sending ");
     _printer->print(len);
     _printer->println(" bytes of data");
   }
+#endif
 
   waitPacketSent(); // Make sure we dont interrupt an outgoing message
-  setModeIdle();
-  resetTxFifoPointers();
 
   if (!waitCAD())
     return false; // Check channel activity
@@ -779,6 +815,7 @@ bool RH_CC1120::send(const uint8_t *data, uint8_t len) {
   // write the data in burst mode
   spiBurstWriteRegister(RH_CC1120_REG_003F_FIFO, data, len);
 
+#ifdef RHAL_FIFO_DEBUG
   if (debug()) {
     uint8_t val = spiReadRegister(RH_CC1120_REG_2FD6_NUM_TXBYTES);
     uint8_t tx_first = spiReadRegister(RH_CC1120_REG_2FD3_TXFIRST);
@@ -797,9 +834,12 @@ bool RH_CC1120::send(const uint8_t *data, uint8_t len) {
 
     _printer->print("[RHAL] TXLAST = ");
     _printer->println(tx_last);
-
-    printBuffer("[RHAL] TX: ", data, len);
   }
+#endif
+
+#ifdef RHAL_DEBUG
+  if (debug()) printBuffer("[RHAL] TX: ", data, len);
+#endif
 
   setModeTx();
 
@@ -810,7 +850,12 @@ uint8_t RH_CC1120::maxMessageLength() { return RH_CC1120_MAX_MESSAGE_LEN; }
 
 void RH_CC1120::setModeIdle() {
   if (_mode != RHModeIdle) {
+#ifdef RHAL_DEBUG
     if (debug()) _printer->println("[RHAL] SIDLE");
+#endif
+
+    resetRxFifoPointers();
+    resetTxFifoPointers();
 
     spiCommand(RH_CC1120_STROBE_36_SIDLE);
     _mode = RHModeIdle;
@@ -832,7 +877,9 @@ void RH_CC1120::setModeRx() {
     // Radio is configuewd to stay in RX mode
 
     spiCommand(RH_CC1120_STROBE_34_SRX);
+#ifdef RHAL_DEBUG
     if (debug()) _printer->println("[RHAL] Radio in RX mode");
+#endif
     _mode = RHModeRx;
   }
 }
@@ -842,8 +889,10 @@ void RH_CC1120::setModeTx() {
     spiCommand(RH_CC1120_STROBE_35_STX);
     _mode = RHModeTx;
 
+#ifdef RHAL_DEBUG
     if (debug())
       _printer->println("[RHAL] Mode TX");
+#endif
   }
 }
 
@@ -854,17 +903,21 @@ bool RH_CC1120::waitPacketSent() {
   if (_mode != RHModeTx)
     return false;
 
+#ifdef RHAL_DEBUG
   if (debug())
     _printer->println("[RHAL] Waiting for TXDONE");
+#endif
 
   // _marcState1 is updated via interrupts, but we need to block anyways
   while (_marcStatus1 != RH_CC1120_MARC_STATUS1_TXDONE)
     YIELD;
 
+#ifdef RHAL_DEBUG
   if (debug()) {
     _printer->print("[RHAL] TXDONE received: _marcStatus1 = 0x");
     _printer->println(_marcStatus1, HEX);
   }
+#endif
 
   _marcStatus1 = RH_CC1120_MARC_STATUS1_NOFAIL;
   return true;
@@ -917,9 +970,9 @@ void RH_CC1120::setDefaultRegisters() {
   spiWriteRegister(RH_CC1120_REG_001E_FIFO_CFG, 0x00);
   spiWriteRegister(RH_CC1120_REG_001F_DEV_ADDR, 0xA2);
   spiWriteRegister(RH_CC1120_REG_0021_FS_CFG, 0x14);
-  //spiWriteRegister(RH_CC1120_REG_0023_WOR_CFG0, 0x22);
+  //spiWriteRegister(RH_CC1120_REG_0023_WOR_CFG0, 0x22); // not sure if we want to use WOR/eWOR
   spiWriteRegister(RH_CC1120_REG_0026_PKT_CFG2, 0x00);
-  spiWriteRegister(RH_CC1120_REG_0027_PKT_CFG1, 0x05); // check CRC but don't check address (i.e., 1st byte of the payload)
+  spiWriteRegister(RH_CC1120_REG_0027_PKT_CFG1, 0x05); // check CRC in RX and add CRC in TX, but don't check address
   spiWriteRegister(RH_CC1120_REG_0028_PKT_CFG0, 0x20); // variable packet length
   spiWriteRegister(RH_CC1120_REG_002A_RFEND_CFG0, 0x38); // stay in RX upon receiving a good packet
   spiWriteRegister(RH_CC1120_REG_002B_PA_CFG2, 0x5D);
