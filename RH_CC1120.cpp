@@ -273,7 +273,8 @@ void RH_CC1120::waitForMarcState(uint8_t state) {
 }
 
 void RH_CC1120::updateRssi() {
-  uint8_t raw_rssi = spiReadRegister(RH_CC1120_REG_2F71_RSSI1); // Was set when sync word was detected
+  // Was set when sync word was detected
+  uint8_t raw_rssi = spiReadRegister(RH_CC1120_REG_2F71_RSSI1);
 
   // Conversion of RSSI value to RX power level in dBm per TI section
   // 5.18.2
@@ -282,12 +283,14 @@ void RH_CC1120::updateRssi() {
         2); // FIXME take care of calibration offset
   else
     _lastRssi =
-      ((int16_t)raw_rssi / 2); // FIXME take care of calibration offset
+      ((int16_t)raw_rssi / 2); // FIXME take care of calibration offset (see CC110L)
 
+#ifdef RHAL_DEBUG
   if (debug()) {
     _printer->print("[RHAL] RSSI = ");
     _printer->println(_lastRssi);
   }
+#endif
 }
 
 // C++ level interrupt handler for this instance
@@ -767,6 +770,7 @@ bool RH_CC1120::recv(uint8_t *buf, uint8_t *len) {
 #endif
     }
 
+    // default length is _bufLen
     memcpy(buf, &_buf[skip], *len);
     ATOMIC_BLOCK_END;
   }
@@ -996,13 +1000,10 @@ void RH_CC1120::setDefaultRegisters() {
   spiWriteRegister(RH_CC1120_REG_2F32_XOSC5, 0x0E);
   spiWriteRegister(RH_CC1120_REG_2F36_XOSC1, 0x03);
 
-  if (_variablePayloadLen) {
-    spiWriteRegister(RH_CC1120_REG_0028_PKT_CFG0, 0x20); // variable len
-    spiWriteRegister(RH_CC1120_REG_002E_PKT_LEN, 0xFF);  //   max = 256 bytes enforced by the CC1120
-  } else {
-    spiWriteRegister(RH_CC1120_REG_0028_PKT_CFG0, 0x00); // fixed len
-    spiWriteRegister(RH_CC1120_REG_002E_PKT_LEN, 0x00);  //   len = 256 bytes enforced by the CC1120
-  }
+  // we're always in variable payload len mode, so we don't incur in discarded
+  // packets because of wrong (unknown length)
+  spiWriteRegister(RH_CC1120_REG_0028_PKT_CFG0, 0x20); // set variable len
+  spiWriteRegister(RH_CC1120_REG_002E_PKT_LEN, 0xFF);  // max = 256 bytes enforced by the CC1120
 }
 
 // Sets registers from a canned modem configuration structure
