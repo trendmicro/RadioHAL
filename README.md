@@ -22,3 +22,7 @@ RadioHAL is not compatible with RadioHead.
 * RFM69 driver modified to remove assumptions on packets structure
 
 All the other drivers are still untouched for now.
+
+## Community
+* Slack team: https://join-rfquack-slack.herokuapp.com
+* Twitter: https://twitter.com/rfquack
