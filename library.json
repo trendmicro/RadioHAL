@@ -8,7 +8,7 @@
     "email": "fede@maggi.cc",
     "url": "https://github.com/phretor/RadioHAL"
   },
-  "version": "0.0.1",
+  "version": "0.1",
   "export": {
     "include": "RadioHAL",
     "exclude":

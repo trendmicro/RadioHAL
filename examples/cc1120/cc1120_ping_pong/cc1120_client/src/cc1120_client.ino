@@ -8,6 +8,8 @@
 #define PIN_IRQ 4 // Connect it to CC1120's GPO2
 #define PIN_RST 5
 
+#define RHAL_DEBUGGING
+
 RH_CC1120 cc1120(PIN_CS, PIN_RST, PIN_IRQ);
 
 uint8_t data[] = { 0x00 };
@@ -18,8 +20,10 @@ void setup()
   while (!Serial)
     ; // wait for serial port to connect. Needed for native USB
 
+#ifdef RHAL_DEBUGGING
   cc1120.setDebug(true);
   cc1120.setPrinter(&Serial);
+#endif
 
   if (!cc1120.init()) {
     Serial.println("init failed");

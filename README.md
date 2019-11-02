@@ -4,11 +4,10 @@ RadioHAL is a generic radio abstraction library used by the [RFQuack
 framework](https://github.com/trendmicro/rfquack).
 
 RadioHAL is based on RadioHead and, as a matter of fact, it retains most of its
-code as it's now in a very initial fork stage. The reason of the fork is
-beacause we'd like to create a library with very few assumption on the packet
-structure. For instance, we're not interested in addressing, broadcasting, and
-all the other useful features that are necessary if you need to run a sensor
-network.
+code as it's now in a very initial stage. The reason of the fork is beacause
+we'd like to create a library with very few assumption on the packet structure.
+For instance, we're not interested in addressing, broadcasting, and all the
+other useful features that are necessary if you need to run a sensor network.
 
 For RF analysis, these features could be useful, but are not necessary and most
 of the times would make payload analysis harder if not impossible. As we needed
