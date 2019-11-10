@@ -964,13 +964,13 @@ protected:
 
 protected:
   /// Low level interrupt service routine for RF69 connected to interrupt 0
-  static void isr0();
+  static void ICACHE_RAM_ATTR isr0();
 
   /// Low level interrupt service routine for RF69 connected to interrupt 1
-  static void isr1();
+  static void ICACHE_RAM_ATTR isr1();
 
   /// Low level interrupt service routine for RF69 connected to interrupt 1
-  static void isr2();
+  static void ICACHE_RAM_ATTR isr2();
 
   /// Array of instances connected to interrupts 0 and 1
   static RH_RF69 *_deviceForInterrupt[];
