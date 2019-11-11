@@ -287,31 +287,22 @@ bool RH_RF69::init() {
   return true;
 }
 
-// C++ level interrupt handler for this instance
-// RH_RF69 is unusual in Mthat it has several interrupt lines, and not a single,
-// combined one. On Moteino, only one of the several interrupt lines (DI0) from
-// the RH_RF69 is connnected to the processor. We use this to get PACKETSDENT
-// and PAYLOADRADY interrupts.
+// Get PACKETSDENT and PAYLOADRADY interrupts.
 void RH_RF69::handleInterrupt() {
   // Get the interrupt cause
-  uint8_t irqflags1 = spiRead(RH_RF69_REG_27_IRQFLAGS1);
   uint8_t irqflags2 = spiRead(RH_RF69_REG_28_IRQFLAGS2);
-
-  if (debug()) {
-    _printer->print("RH_RF69_REG_27_IRQFLAGS1 = ");
-    _printer->println(irqflags1);
-
-    _printer->print("RH_RF69_REG_28_IRQFLAGS2 = ");
-    _printer->println(irqflags2);
-  }
 
   if (_mode == RHModeTx && (irqflags2 & RH_RF69_IRQFLAGS2_PACKETSENT)) {
     // A transmitter message has been fully sent
     setModeIdle(); // Clears FIFO
     _txGood++;
+
+#ifdef RHAL_DEBUG
     if (debug())
       _printer->println("PACKETSENT");
+#endif
   }
+
   // Must look for PAYLOADREADY, not CRCOK, since only PAYLOADREADY occurs
   // _after_ AES decryption has been done
 
@@ -324,13 +315,17 @@ void RH_RF69::handleInterrupt() {
     // Save it in our buffer
     readFifo();
 
+#ifdef RHAL_DEBUG
     if (debug())
       _printer->println("PAYLOADREADY");
+#endif
   }
 
   if (_mode == RHModeRx && (irqflags2 & RH_RF69_IRQFLAGS2_FIFOFULL)) {
+#ifdef RHAL_DEBUG
     if (debug())
       _printer->println("FIFOFULL");
+#endif
   }
 }
 
@@ -358,11 +353,13 @@ void RH_RF69::readFifo() {
     payloadlen = _spi.transfer(
         0); // We're in variable payload len mode: first byte is payload len
 
+#ifdef RHAL_DEBUG
   if (debug()) {
     _printer->print("Reading data off the RX FIFO: ");
     _printer->print(payloadlen);
     _printer->println(" bytes");
   }
+#endif
 
   if (payloadlen <= RH_RF69_MAX_ENCRYPTABLE_PAYLOAD_LEN) {
     for (_bufLen = 0; _bufLen < payloadlen; _bufLen++)
@@ -413,7 +410,6 @@ void RH_RF69::setDeviation(float deviation) {
   spiWrite(RH_RF69_REG_05_FDEVMSB, (fdev >> 8) & 0xff);
   spiWrite(RH_RF69_REG_06_FDEVLSB, (fdev >> 0) & 0xff);
 }
-
 
 bool RH_RF69::setFrequency(float centre, float afcPullInRange) {
   // Frf = FRF / FSTEP
@@ -492,10 +488,13 @@ void RH_RF69::setModeTx() {
       spiWrite(RH_RF69_REG_5A_TESTPA1, RH_RF69_TESTPA1_BOOST);
       spiWrite(RH_RF69_REG_5C_TESTPA2, RH_RF69_TESTPA2_BOOST);
     }
+
+    /* TODO optimization test */
     spiWrite(
         RH_RF69_REG_25_DIOMAPPING1,
         RH_RF69_DIOMAPPING1_DIO0MAPPING_00); // Set interrupt line 0 PacketSent
-    setOpMode(RH_RF69_OPMODE_MODE_TX);       // Clears FIFO
+
+    setOpMode(RH_RF69_OPMODE_MODE_TX); // Clears FIFO
     _mode = RHModeTx;
   }
 }
@@ -731,17 +730,25 @@ bool RH_RF69::send(const uint8_t *data, uint8_t len) {
   if (!waitCAD())
     return false; // Check channel activity
 
+  /* TODO optimization check
+  spiWrite(
+      RH_RF69_REG_25_DIOMAPPING1,
+      RH_RF69_DIOMAPPING1_DIO0MAPPING_00); // Set interrupt line 0 PacketSent
+      */
+
   ATOMIC_BLOCK_START;
   digitalWrite(_slaveSelectPin, LOW);
   _spi.transfer(
       RH_RF69_REG_00_FIFO |
       RH_RF69_SPI_WRITE_MASK); // Send the FIFO address with the write mask on
 
+#ifdef RHAL_DEBUG
   if (debug()) {
     _printer->print("Preparing a packet holding ");
     _printer->print(len);
     _printer->println(" bytes of data");
   }
+#endif
 
   // if variable packet len mode, we must write the len
   if (_variablePayloadLen) {
@@ -755,21 +762,25 @@ bool RH_RF69::send(const uint8_t *data, uint8_t len) {
   // Now the actual payload
   while (len--)
     _spi.transfer(*data++);
+
   digitalWrite(_slaveSelectPin, HIGH);
   ATOMIC_BLOCK_END;
 
   setModeTx(); // Start the transmitter
+
   return true;
 }
 
 uint8_t RH_RF69::maxMessageLength() { return RH_RF69_MAX_MESSAGE_LEN; }
 
 bool RH_RF69::printRegister(uint8_t reg) {
+#ifdef RHAL_DEBUG
   if (debug()) {
     _printer->print(reg, HEX);
     _printer->print(" ");
     _printer->println(spiRead(reg), HEX);
   }
+#endif
   return true;
 }
 

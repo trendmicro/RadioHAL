@@ -864,6 +864,7 @@ public:
   /// \return true if the message length was valid and it was correctly queued
   /// for transmit
   bool send(const uint8_t *data, uint8_t len);
+  //bool send(const uint8_t *data, uint8_t len, uint32_t repeat); // TODO implement
 
   /**
    * @brief Set or unset promiscuous mode-related registers.
